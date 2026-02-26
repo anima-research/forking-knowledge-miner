@@ -24,6 +24,7 @@ import { SYSTEM_PROMPT } from './prompts/system.js';
 import { SubagentModule } from './modules/subagent-module.js';
 import { LessonsModule } from './modules/lessons-module.js';
 import { RetrievalModule } from './modules/retrieval-module.js';
+import { TuiModule } from './modules/tui-module.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -70,7 +71,7 @@ async function createFramework(membrane: Membrane) {
         strategy: new PassthroughStrategy(),
       },
     ],
-    modules: [subagentModule, lessonsModule, retrievalModule],
+    modules: [new TuiModule(), subagentModule, lessonsModule, retrievalModule],
     mcplServers: [
       {
         id: 'zulip',
@@ -94,16 +95,12 @@ async function runReadline(framework: AgentFramework) {
   const { handleCommand } = await import('./commands.js');
 
   // Trace listener: stream tokens and tool calls to stdout
-  let inferenceActive = false;
   let inferenceResolve: (() => void) | null = null;
 
   framework.onTrace((event) => {
-    // Cast to access dynamic properties — TraceEvent is a discriminated union
-    // but tool/token events have extra fields beyond the base type
     const e = event as unknown as Record<string, unknown>;
     switch (event.type) {
       case 'inference:started':
-        inferenceActive = true;
         process.stdout.write('\n');
         break;
       case 'inference:tokens': {
@@ -113,13 +110,11 @@ async function runReadline(framework: AgentFramework) {
       }
       case 'inference:completed':
         process.stdout.write('\n');
-        inferenceActive = false;
         inferenceResolve?.();
         inferenceResolve = null;
         break;
       case 'inference:failed':
         console.error(`\nError: ${e.error}`);
-        inferenceActive = false;
         inferenceResolve?.();
         inferenceResolve = null;
         break;
@@ -139,10 +134,21 @@ async function runReadline(framework: AgentFramework) {
     }
   });
 
-  /** Wait for any active inference to complete. */
+  /**
+   * Wait for the next inference cycle to complete.
+   * Sets up the promise BEFORE the inference starts, so we don't miss it.
+   */
   function waitForInference(): Promise<void> {
-    if (!inferenceActive) return Promise.resolve();
-    return new Promise(resolve => { inferenceResolve = resolve; });
+    return new Promise(resolve => {
+      inferenceResolve = resolve;
+      // Safety timeout: don't hang forever if inference never starts
+      setTimeout(() => {
+        if (inferenceResolve === resolve) {
+          inferenceResolve = null;
+          resolve();
+        }
+      }, 120_000);
+    });
   }
 
   /** Process a single input line. Returns true if should quit. */
