@@ -4,8 +4,8 @@
  * TUI-driven social knowledge extraction from Zulip.
  *
  * Usage:
- *   npm start                  # ANSI TUI mode (requires TTY)
- *   npm start -- --no-tui      # Readline mode (works in pipes/CI)
+ *   bun src/index.ts            # OpenTUI mode (requires TTY)
+ *   bun src/index.ts --no-tui   # Readline mode (works in pipes/CI)
  *
  * Environment variables:
  *   ANTHROPIC_API_KEY   - Required
@@ -15,7 +15,6 @@
  *   STORE_PATH          - Chronicle store path (default: ./data/store)
  */
 
-import 'dotenv/config';
 import { Membrane, AnthropicAdapter, NativeFormatter } from 'membrane';
 import { AgentFramework, PassthroughStrategy } from '@connectome/agent-framework';
 import { resolve, dirname } from 'node:path';
