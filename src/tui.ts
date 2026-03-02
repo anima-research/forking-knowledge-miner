@@ -829,6 +829,8 @@ export async function runTui(framework: AgentFramework, membrane: Membrane): Pro
       }
     } else {
       addLine(`You: ${text}`, GREEN);
+      state.status = 'thinking';
+      updateStatus();
       framework.pushEvent({
         type: 'external-message', source: 'tui',
         content: text, metadata: {}, triggerInference: true,
