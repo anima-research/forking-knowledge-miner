@@ -120,6 +120,7 @@ export async function runTui(framework: AgentFramework, membrane: Membrane): Pro
     id: 'conversation',
     flexGrow: 1,
     stickyScroll: true,
+    stickyStart: 'bottom',
   });
 
   const fleetText = new TextRenderable(renderer, {
