@@ -105,6 +105,7 @@ export interface ActiveSubagent {
   task: string;
   status: 'running' | 'completed' | 'failed';
   startedAt: number;
+  completedAt?: number;
   statusMessage?: string;
   toolCallsCount: number;
   findingsCount: number;
@@ -890,6 +891,7 @@ export class SubagentModule implements Module {
           }
 
           entry.status = 'completed';
+          entry.completedAt = Date.now();
           entry.toolCallsCount = toolCallsCount;
           this.onSubagentSuccess();
           this.emit(input.name, { type: 'done', summary: speech });
@@ -913,6 +915,7 @@ export class SubagentModule implements Module {
       }
 
       entry.status = 'failed';
+      entry.completedAt = Date.now();
       entry.statusMessage = lastError!.message;
       throw lastError!;
     } finally {
@@ -1018,6 +1021,7 @@ export class SubagentModule implements Module {
           }
 
           entry.status = 'completed';
+          entry.completedAt = Date.now();
           entry.toolCallsCount = toolCallsCount;
           this.onSubagentSuccess();
           this.emit(input.name, { type: 'done', summary: speech });
@@ -1041,6 +1045,7 @@ export class SubagentModule implements Module {
       }
 
       entry.status = 'failed';
+      entry.completedAt = Date.now();
       entry.statusMessage = lastError!.message;
       throw lastError!;
     } finally {

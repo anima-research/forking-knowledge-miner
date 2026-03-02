@@ -105,6 +105,7 @@ export async function runTui(framework: AgentFramework, membrane: Membrane): Pro
   let streaming = false;
   let currentStreamText: TextRenderable | null = null;
   let currentStreamBuffer = '';
+  let verboseChat = false;
 
   // ── Layout ────────────────────────────────────────────────────────────
 
@@ -344,9 +345,10 @@ export async function runTui(framework: AgentFramework, membrane: Membrane): Pro
         : `… ${state.status}`;
     } else {
       const sa = node.agent!;
-      const elapsed = Math.floor((Date.now() - sa.startedAt) / 1000);
+      const endTime = sa.completedAt ?? Date.now();
+      const elapsed = Math.floor((endTime - sa.startedAt) / 1000);
       statusTag = sa.status === 'running' ? `running ${elapsed}s`
-        : sa.status === 'completed' ? `done ${elapsed}s` : 'failed';
+        : sa.status === 'completed' ? `done ${elapsed}s` : `failed ${elapsed}s`;
     }
 
     // Context size (try fullName, then short name)
@@ -700,15 +702,40 @@ export async function runTui(framework: AgentFramework, membrane: Membrane): Pro
         }
         break;
       }
+
+      case 'tool:completed':
+        break;
     }
   }
 
   // ── Subagent polling ────────────────────────────────────────────────
 
   const subMod = framework.getAllModules().find(m => m.name === 'subagent') as SubagentModule | undefined;
+
+  // Subscribe to each subagent's done event for verbose chat display.
+  // We subscribe per-agent as they appear (via polling) so we get the name.
+  const subagentDoneUnsubs: Array<() => void> = [];
+  const subscribedSubagents = new Set<string>();
+
+  function subscribeSubagentDone(name: string) {
+    if (subscribedSubagents.has(name) || !subMod) return;
+    subscribedSubagents.add(name);
+    const unsub = subMod.onPeekStream(name, (event) => {
+      if (event.type === 'done' && verboseChat) {
+        const summary = event.summary;
+        const truncated = summary.length > 200 ? summary.slice(0, 197) + '...' : summary;
+        addLine(`  ◀ [${name}] ${truncated}`, CYAN);
+      }
+    });
+    subagentDoneUnsubs.push(unsub);
+  }
   const pollTimer = setInterval(() => {
     if (subMod) {
       state.subagents = [...subMod.activeSubagents.values()];
+      // Subscribe to done events for any new subagents
+      for (const sa of state.subagents) {
+        subscribeSubagentDone(sa.name);
+      }
       updateStatus();
       if (state.viewMode === 'fleet') updateFleetView();
       else if (state.viewMode === 'peek') updatePeekView();
@@ -726,6 +753,11 @@ export async function runTui(framework: AgentFramework, membrane: Membrane): Pro
     }
     if (key.ctrl && key.name === 'c') {
       cleanup();
+      return;
+    }
+    if (key.ctrl && key.name === 'v') {
+      verboseChat = !verboseChat;
+      addLine(verboseChat ? '(verbose: on — showing agent thoughts & subagent results)' : '(verbose: off)', DIM_GRAY);
       return;
     }
 
@@ -813,6 +845,7 @@ export async function runTui(framework: AgentFramework, membrane: Membrane): Pro
 
   function cleanup() {
     cleanupPeek();
+    for (const unsub of subagentDoneUnsubs) unsub();
     clearInterval(pollTimer);
     framework.offTrace(onTrace as (e: unknown) => void);
     renderer.destroy();
