@@ -27,6 +27,7 @@ import {
   dim,
   fg,
 } from '@opentui/core';
+import { createWriteStream, mkdirSync } from 'node:fs';
 import type { AgentFramework } from '@connectome/agent-framework';
 import type { AutobiographicalStrategy } from '@connectome/context-manager';
 import type { Membrane, NormalizedRequest } from 'membrane';
@@ -88,6 +89,18 @@ const WHITE = '#cccccc';
 // ---------------------------------------------------------------------------
 
 export async function runTui(framework: AgentFramework, membrane: Membrane): Promise<void> {
+  // Redirect stderr to a log file — console.error is invisible once the TUI owns the terminal
+  const logDir = process.env.STORE_PATH || './data/store';
+  mkdirSync(logDir, { recursive: true });
+  const logPath = `${logDir}/../tui-error.log`;
+  const logStream = createWriteStream(logPath, { flags: 'a' });
+  logStream.write(`\n--- session ${new Date().toISOString()} ---\n`);
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string | Uint8Array, ...args: unknown[]) => {
+    logStream.write(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
 
   // Set terminal title
@@ -706,6 +719,18 @@ export async function runTui(framework: AgentFramework, membrane: Membrane): Pro
 
       case 'tool:completed':
         break;
+
+      case 'tool:failed': {
+        const tool = event.tool as string;
+        const error = event.error as string;
+        if (agent === 'researcher') {
+          addLine(`[tool error] ${tool}: ${error}`, RED);
+        } else if (agent) {
+          const short = agent.replace(/^(spawn|fork)-/, '').replace(/-\d+$/, '').replace(/-retry\d+$/, '');
+          addLine(`  [${short}] tool error: ${tool}: ${error}`, RED);
+        }
+        break;
+      }
     }
   }
 
@@ -842,6 +867,7 @@ export async function runTui(framework: AgentFramework, membrane: Membrane): Pro
   // ── Init ───────────────────────────────────────────────────────────
 
   addLine('Zulip Knowledge App. Type /help for commands.', GRAY);
+  addLine(`Error log: ${logPath}`, DIM_GRAY);
   framework.onTrace(onTrace as (e: unknown) => void);
 
   // ── Cleanup ────────────────────────────────────────────────────────
@@ -853,6 +879,9 @@ export async function runTui(framework: AgentFramework, membrane: Membrane): Pro
     framework.offTrace(onTrace as (e: unknown) => void);
     renderer.destroy();
     process.stdout.write('\x1b]0;\x07');
+    // Restore stderr
+    process.stderr.write = origStderrWrite;
+    logStream.end();
     framework.stop().then(() => {
       resolveExit?.();
     });
