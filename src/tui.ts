@@ -204,6 +204,16 @@ export async function runTui(app: AppContext): Promise<void> {
     placeholder: 'Type a message or /help...',
   });
 
+  // ── Paste handling (CC-style) ───────────────────────────────────────
+  // Large pastes get stored out-of-band; a short placeholder appears in
+  // the input field.  On submit the placeholders are expanded back.
+  const pastedTexts: string[] = [];
+  (input as any).handlePaste = (event: { text: string }) => {
+    pastedTexts.push(event.text);
+    const tag = `[pasted text #${pastedTexts.length}]`;
+    (input as any).insertText(tag);
+  };
+
   const inputBox = new BoxRenderable(renderer, {
     id: 'input-box',
     height: 1,
@@ -1112,10 +1122,16 @@ export async function runTui(app: AppContext): Promise<void> {
   let resolveExit: (() => void) | null = null;
 
   input.on(InputRenderableEvents.ENTER, () => {
-    const text = input.value.trim();
+    const raw = input.value.trim();
     input.deleteLine();
 
-    if (!text) return;
+    if (!raw) { pastedTexts.length = 0; return; }
+
+    // Expand paste placeholders
+    const text = pastedTexts.length > 0
+      ? raw.replace(/\[pasted text #(\d+)\]/g, (m, n) => pastedTexts[parseInt(n, 10) - 1] ?? m)
+      : raw;
+    pastedTexts.length = 0;
 
     if (text.startsWith('/')) {
       const result = handleCommand(text, app);
@@ -1166,7 +1182,7 @@ export async function runTui(app: AppContext): Promise<void> {
         });
       }
     } else {
-      addLine(`You: ${text}`, GREEN);
+      addLine(`You: ${raw}`, GREEN);
       state.status = 'thinking';
       updateStatus();
       app.framework.pushEvent({
