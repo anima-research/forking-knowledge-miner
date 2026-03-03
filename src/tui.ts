@@ -321,6 +321,39 @@ export async function runTui(app: AppContext): Promise<void> {
     currentStreamBuffer = '';
   }
 
+  function loadSessionHistory() {
+    const agent = app.framework.getAgent('researcher');
+    if (!agent) return;
+    const cm = agent.getContextManager();
+    const messages = cm.getAllMessages();
+    if (messages.length === 0) return;
+
+    addLine(`── session history (${messages.length} messages) ──`, DIM_GRAY);
+
+    for (const msg of messages) {
+      const toolNames: string[] = [];
+
+      for (const block of msg.content) {
+        if (block.type === 'text' && (block as { text: string }).text.trim()) {
+          if (msg.participant === 'user') {
+            addLine(`You: ${(block as { text: string }).text}`, GREEN);
+          } else {
+            addLine((block as { text: string }).text, WHITE);
+          }
+        } else if (block.type === 'tool_use') {
+          toolNames.push((block as { name: string }).name);
+        }
+        // skip tool_result blocks
+      }
+
+      if (toolNames.length > 0) {
+        addLine(`[tools] ${toolNames.join(', ')}`, YELLOW);
+      }
+    }
+
+    addLine(`── end history ──`, DIM_GRAY);
+  }
+
   const fmtK = (n: number) => {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
     if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
@@ -964,7 +997,10 @@ export async function runTui(app: AppContext): Promise<void> {
       }
 
       if (state.viewMode === 'peek' && state.peekTarget === name) updatePeekView();
-      if (state.viewMode === 'fleet') updateFleetView();
+      if (state.viewMode === 'fleet') {
+        state.subagents = [...subMod!.activeSubagents.values()];
+        updateFleetView();
+      }
     });
     subagentStreamUnsubs.push(unsub);
   }
@@ -1101,6 +1137,7 @@ export async function runTui(app: AppContext): Promise<void> {
 
           const session = app.sessionManager.getActiveSession();
           addLine(`Session: ${session?.name ?? 'unknown'}`, GRAY);
+          loadSessionHistory();
           state.status = 'idle';
           state.tool = null;
           state.subagents = [];
@@ -1130,6 +1167,7 @@ export async function runTui(app: AppContext): Promise<void> {
   if (session) addLine(`Session: ${session.name}`, DIM_GRAY);
   addLine(`Error log: ${logPath}`, DIM_GRAY);
   app.framework.onTrace(onTrace as (e: unknown) => void);
+  loadSessionHistory();
 
   // ── Cleanup ────────────────────────────────────────────────────────
 
