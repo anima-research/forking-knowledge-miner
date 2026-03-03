@@ -165,6 +165,7 @@ The agent writes reports to `./output/` and persists lessons in the Chronicle st
 | Key | Action |
 |-----|--------|
 | `Enter` | Send message or command |
+| `Esc` | Interrupt agent |
 | `Tab` | Toggle fleet view (subagent tree) |
 | `Ctrl+C` | Exit |
 

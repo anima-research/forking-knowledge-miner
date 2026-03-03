@@ -1041,6 +1041,22 @@ export async function runTui(app: AppContext): Promise<void> {
       return;
     }
 
+    // Chat view: Escape interrupts the active agent
+    if (key.name === 'escape' && state.viewMode === 'chat') {
+      if (state.status !== 'idle' && state.status !== 'error') {
+        const agent = app.framework.getAgent('researcher');
+        if (agent) {
+          agent.cancelStream();
+          if (streaming) endStream();
+          state.status = 'idle';
+          state.tool = null;
+          addLine('  (interrupted)', YELLOW);
+          updateStatus();
+        }
+      }
+      return;
+    }
+
     // Peek view: Escape or p goes back to fleet
     if (state.viewMode === 'peek') {
       if (key.name === 'escape' || key.name === 'p') {
@@ -1218,8 +1234,9 @@ function formatStatusLeft(
   }
   if (state.viewMode === 'fleet' || state.viewMode === 'peek') {
     bar += state.viewMode === 'peek' ? ` | peek: ${state.peekTarget}` : ' | fleet view';
-  } else if (running > 0) {
-    bar += ' Tab:fleet';
+  } else if (state.viewMode === 'chat') {
+    if (state.status !== 'idle' && state.status !== 'error') bar += ' Esc:stop';
+    if (running > 0) bar += ' Tab:fleet';
   }
   bar += ']';
   return bar;
