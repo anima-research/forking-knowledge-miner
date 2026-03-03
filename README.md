@@ -16,20 +16,32 @@ Built on the Connectome agent framework stack as a practical application and dog
 ## Prerequisites
 
 - [Bun](https://bun.sh/) runtime (not Node.js)
+- [Rust toolchain](https://rustup.rs/) (for building Chronicle's N-API bindings)
 - An Anthropic API key
 - A Zulip bot account (for API access to your workspace)
 - The [Zulip MCP server](https://github.com/antra-tess/zulip_mcp), cloned and built
 
 ## Setup
 
-### 1. Install dependencies
+### 1. Build Chronicle
+
+Chronicle is a Rust crate with Node.js bindings via N-API. It must be built locally before installing:
+
+```bash
+git clone https://github.com/Anarchid/chronicle.git ../chronicle
+cd ../chronicle
+npm install && npm run build
+cd ../zulip-app
+```
+
+### 2. Install dependencies
 
 ```bash
 cd zulip-app
 bun install
 ```
 
-### 2. Build the Zulip MCP server
+### 3. Build the Zulip MCP server
 
 ```bash
 # Clone alongside the zulip-app directory
@@ -39,7 +51,7 @@ npm install && npm run build
 cd ../zulip-app
 ```
 
-### 3. Configure Zulip credentials
+### 4. Configure Zulip credentials
 
 Create a `.zuliprc` file in the zulip-app directory (or wherever you'll run from):
 
@@ -52,7 +64,7 @@ site=https://your-org.zulipchat.com
 
 You can generate bot credentials in Zulip under **Settings > Your bots**.
 
-### 4. Set environment variables
+### 5. Set environment variables
 
 ```bash
 cp .env.example .env
@@ -73,7 +85,7 @@ Optional variables:
 | `MODEL` | `claude-opus-4-6` | Model for the main researcher agent |
 | `STORE_PATH` | `./data/store` | Chronicle persistent storage location |
 
-### 5. MCPL server configuration
+### 6. MCPL server configuration
 
 On first run, the app auto-generates `mcpl-servers.json` with the Zulip server entry. You can also create it manually:
 

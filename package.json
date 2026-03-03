@@ -11,7 +11,7 @@
   "dependencies": {
     "@connectome/agent-framework": "github:Anarchid/agent-framework#mcpl-first-class",
     "@connectome/context-manager": "github:Anarchid/context-manager#fix-tool-crash",
-    "chronicle": "github:Anarchid/chronicle#fix-warnings",
+    "chronicle": "file:../chronicle",
     "membrane": "github:Anarchid/membrane#main",
     "@opentui/core": "^0.1.82"
   },

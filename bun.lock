@@ -8,7 +8,7 @@
         "@connectome/agent-framework": "github:Anarchid/agent-framework#mcpl-first-class",
         "@connectome/context-manager": "github:Anarchid/context-manager#fix-tool-crash",
         "@opentui/core": "^0.1.82",
-        "chronicle": "github:Anarchid/chronicle#fix-warnings",
+        "chronicle": "file:../chronicle",
         "membrane": "github:Anarchid/membrane#main",
       },
       "devDependencies": {
@@ -20,9 +20,9 @@
   "packages": {
     "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.52.0", "", { "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-d4c+fg+xy9e46c8+YnrrgIQR45CZlAi7PwdzIfDXDM6ACxEZli1/fxhURsq30ZpMZy6LvSkr41jGq5aF5TD7rQ=="],
 
-    "@connectome/agent-framework": ["@connectome/agent-framework@github:Anarchid/agent-framework#e3ba619", { "dependencies": { "@connectome/context-manager": "file:../context-manager", "chronicle": "file:../chronicle", "discord.js": "^14.25.1", "membrane": "file:../membrane", "ws": "^8.18.0" }, "bin": { "agent-framework-mcp": "./dist/src/api/mcp-server.js" } }, "Anarchid-agent-framework-e3ba619", "sha512-tSBeqI920++MVPMw21dZLTZcUFkfUlHm7ZjJsnf8qIWvdd3C5WjV3ga1QGj+4kxBZ2+HGiqWyw/tIC06X6ma5Q=="],
+    "@connectome/agent-framework": ["@connectome/agent-framework@github:Anarchid/agent-framework#3ec5c24", { "dependencies": { "@connectome/context-manager": "file:../context-manager", "chronicle": "file:../chronicle", "discord.js": "^14.25.1", "membrane": "file:../membrane", "ws": "^8.18.0" }, "bin": { "agent-framework-mcp": "./dist/src/api/mcp-server.js" } }, "Anarchid-agent-framework-3ec5c24", "sha512-T5thi6nbChrH5cKesZcvaFgF7eaJ40ZPtuw0YhdoGhlRSK5EBi9py13g5p4LtCxaAMhNdrQztUfzkDu3ESsvYA=="],
 
-    "@connectome/context-manager": ["@connectome/context-manager@github:Anarchid/context-manager#8b7a7fd", { "dependencies": { "chronicle": "file:../chronicle", "membrane": "file:../membrane" } }, "Anarchid-context-manager-8b7a7fd", "sha512-hgwdicgz6M6Jrf6IpkmSfSXcEe3PzcsSrowkQmj0r+m5JuI6pqnRbkVobVChdDPfrCobLmjCzAQmww1SDAVBAQ=="],
+    "@connectome/context-manager": ["@connectome/context-manager@github:Anarchid/context-manager#b594a29", { "dependencies": { "chronicle": "file:../chronicle", "membrane": "file:../membrane" } }, "Anarchid-context-manager-b594a29", "sha512-xfF4ENbWLqyEq3aT9V62a0xwM/jFiQPiQ/CiGB/SuwpxGkB/Ic7vOnIeFJGBLzOYR3PuxO7omWUDgEz0wtMofg=="],
 
     "@dimforge/rapier2d-simd-compat": ["@dimforge/rapier2d-simd-compat@0.17.3", "", {}, "sha512-bijvwWz6NHsNj5e5i1vtd3dU2pDhthSaTUZSh14DUGGKJfw8eMnlWZsxwHBxB/a3AXVNDjL9abuHw1k9FGR+jg=="],
 
@@ -94,6 +94,8 @@
 
     "@jimp/utils": ["@jimp/utils@1.6.0", "", { "dependencies": { "@jimp/types": "1.6.0", "tinycolor2": "^1.6.0" } }, "sha512-gqFTGEosKbOkYF/WFj26jMHOI5OH2jeP1MmC/zbK6BF6VJBf8rIC5898dPfSzZEbSA0wbbV5slbntWVc5PKLFA=="],
 
+    "@napi-rs/cli": ["@napi-rs/cli@2.18.4", "", { "bin": { "napi": "scripts/index.js" } }, "sha512-SgJeA4df9DE2iAEpr3M2H0OKl/yjtg1BnRI5/JyowS71tUWhrfSu2LT0V3vlHET+g1hBVlrO60PmEXwUEKp8Mg=="],
+
     "@opentui/core": ["@opentui/core@0.1.84", "", { "dependencies": { "bun-ffi-structs": "0.1.2", "diff": "8.0.2", "jimp": "1.6.0", "marked": "17.0.1", "yoga-layout": "3.2.1" }, "optionalDependencies": { "@dimforge/rapier2d-simd-compat": "^0.17.3", "@opentui/core-darwin-arm64": "0.1.84", "@opentui/core-darwin-x64": "0.1.84", "@opentui/core-linux-arm64": "0.1.84", "@opentui/core-linux-x64": "0.1.84", "@opentui/core-win32-arm64": "0.1.84", "@opentui/core-win32-x64": "0.1.84", "bun-webgpu": "0.1.5", "planck": "^1.4.2", "three": "0.177.0" }, "peerDependencies": { "web-tree-sitter": "0.25.10" } }, "sha512-UdPD/sldUSiIu588l45lQq6q09zLW8L4GOgkA4E3fyExIlIgOrpIhFSKqZwbVCbe53dQOybHVUdKob64Xxhm4w=="],
 
     "@opentui/core-darwin-arm64": ["@opentui/core-darwin-arm64@0.1.84", "", { "os": "darwin", "cpu": "arm64" }, "sha512-MpLdRYd2zLJP7IcWHu1SYXFet6ZfOzTUW12iaexlUL4DkAU+P5mO1v/OdLlZrmXVj/FD3BqDM5SUIXNE0+A46Q=="],
@@ -148,7 +150,7 @@
 
     "bun-webgpu-win32-x64": ["bun-webgpu-win32-x64@0.1.5", "", { "os": "win32", "cpu": "x64" }, "sha512-zvnUl4EAsQbKsmZVu+lEJcH8axQ7MiCfqg2OmnHd6uw1THABmHaX0GbpKiHshdgadNN2Nf+4zDyTJB5YMcAdrA=="],
 
-    "chronicle": ["@anima-research/chronicle@github:Anarchid/chronicle#e4484e2", {}, "Anarchid-chronicle-e4484e2", "sha512-wHyqRDE9JJS7XsijKdcB13SB/CMEhHyFnvAEHCqjjAojmjt9kqstLtTzMt9MbnJTpVqQjPz4PplmHPy30RuvqQ=="],
+    "chronicle": ["@anima-research/chronicle@file:../chronicle", { "devDependencies": { "@napi-rs/cli": "^2.18.0" } }],
 
     "diff": ["diff@8.0.2", "", {}, "sha512-sSuxWU5j5SR9QQji/o2qMvqRNYRDOcBTgsJ/DeCf4iSN4gW+gNMXM7wFIP+fdXZxoNiAnHUTGjCr+TSWXdRDKg=="],
 
@@ -184,7 +186,7 @@
 
     "marked": ["marked@17.0.1", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-boeBdiS0ghpWcSwoNm/jJBwdpFaMnZWRzjA6SkUMYb40SVaN1x7mmfGKp0jvexGcx+7y2La5zRZsYFZI6Qpypg=="],
 
-    "membrane": ["@animalabs/membrane@github:Anarchid/membrane#1d59a5e", { "dependencies": { "@anthropic-ai/sdk": "^0.52.0" } }, "Anarchid-membrane-1d59a5e", "sha512-FS7BJnhsLHG/HGPOcAgjNH0MUoQgpmzADw/RMhXWUj7XO1oq5s5Yr8qjdBbhcJR4pL51o4zNGsDkwv1gpwRUhg=="],
+    "membrane": ["@animalabs/membrane@github:Anarchid/membrane#abedc51", { "dependencies": { "@anthropic-ai/sdk": "^0.52.0" } }, "Anarchid-membrane-abedc51", "sha512-jS9ANGXM2WEYKAhIdGIdPxuOISXK1MqO/izM/zROGlmtGWXdGN83q9ze7rNRDTWDGS+Q9q8JGUwm0MyVC45LGg=="],
 
     "mime": ["mime@3.0.0", "", { "bin": { "mime": "cli.js" } }, "sha512-jSCU7/VB1loIWBZe14aEYHU/+1UMEHoaO7qxCOVJOw9GgH72VAWppxNcjU+x9a2k3GSIBXNKxXQFqRvvZ7vr3A=="],
 
