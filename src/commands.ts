@@ -13,6 +13,7 @@
  *   /status        — Show agent/module status
  *   /clear         — Clear conversation display
  *   /mcp list|add|remove|env — Manage MCPL server config
+ *   /budget [N]    — Show/set stream token budget (e.g. /budget 1m)
  *   /help          — List commands
  */
 
@@ -77,6 +78,7 @@ export function handleCommand(command: string, framework: AgentFramework): Comma
           { text: '  /mcp add <id> <cmd>    Add/overwrite server', style: 'system' },
           { text: '  /mcp remove <id>       Remove a server', style: 'system' },
           { text: '  /mcp env <id> K=V ...  Set env vars on server', style: 'system' },
+          { text: '  /budget [tokens]       Show/set stream token budget', style: 'system' },
         ],
       };
 
@@ -113,6 +115,9 @@ export function handleCommand(command: string, framework: AgentFramework): Comma
     case 'mcp':
       return handleMcp(args);
 
+    case 'budget':
+      return handleBudget(framework, args[0]);
+
     default:
       return {
         lines: [{ text: `Unknown command: /${cmd}. Type /help.`, style: 'system' }],
@@ -137,6 +142,55 @@ function handleStatus(framework: AgentFramework): CommandResult {
   lines.push({ text: `  Queue depth: ${framework.getQueueDepth()}`, style: 'system' });
 
   return { lines };
+}
+
+function handleBudget(framework: AgentFramework, arg?: string): CommandResult {
+  const agents = framework.getAllAgents();
+  if (agents.length === 0) {
+    return { lines: [{ text: 'No agents.', style: 'system' }] };
+  }
+
+  if (!arg) {
+    // Show current budgets
+    const lines: Line[] = [{ text: '--- Stream Token Budgets ---', style: 'system' }];
+    for (const agent of agents) {
+      const budget = agent.maxStreamTokens;
+      const last = agent.lastStreamInputTokens;
+      const pct = budget > 0 ? ((last / budget) * 100).toFixed(0) : '—';
+      lines.push({
+        text: `  ${agent.name}: ${(budget / 1000).toFixed(0)}k (last: ${(last / 1000).toFixed(0)}k, ${pct}%)`,
+        style: 'system',
+      });
+    }
+    return { lines };
+  }
+
+  // Parse token count — accept "150k", "150000", "1m", etc.
+  let tokens: number;
+  const lower = arg.toLowerCase();
+  if (lower.endsWith('m')) {
+    tokens = parseFloat(lower.slice(0, -1)) * 1_000_000;
+  } else if (lower.endsWith('k')) {
+    tokens = parseFloat(lower.slice(0, -1)) * 1_000;
+  } else {
+    tokens = parseInt(arg, 10);
+  }
+
+  if (isNaN(tokens) || tokens <= 0) {
+    return { lines: [{ text: `Invalid token count: "${arg}". Examples: 150k, 1m, 200000`, style: 'system' }] };
+  }
+
+  for (const agent of agents) {
+    agent.maxStreamTokens = tokens;
+  }
+
+  const display = tokens >= 1_000_000
+    ? `${(tokens / 1_000_000).toFixed(1)}m`
+    : `${(tokens / 1_000).toFixed(0)}k`;
+
+  return {
+    lines: [{ text: `Stream budget set to ${display} tokens for all agents.`, style: 'system' }],
+  };
 }
 
 function handleLessons(framework: AgentFramework): CommandResult {
