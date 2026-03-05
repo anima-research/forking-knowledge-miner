@@ -49,6 +49,8 @@ export interface CommandResult {
   quit?: boolean;
   /** Session ID to switch to — caller performs the async switch. */
   switchToSessionId?: string;
+  /** True when a Chronicle branch switch occurred — TUI should refreshFromStore(). */
+  branchChanged?: boolean;
 }
 
 /**
@@ -428,7 +430,7 @@ function handleUndo(framework: AgentFramework): CommandResult {
       messageId: undoPoint,
     });
 
-    return { lines: [{ text: `Undone. Switched to branch ${newBranchId}.`, style: 'system' }] };
+    return { lines: [{ text: `Undone. Switched to branch ${newBranchId}.`, style: 'system' }], branchChanged: true };
   } catch (err) {
     return { lines: [{ text: `Undo failed: ${err}`, style: 'system' }] };
   }
@@ -445,7 +447,7 @@ function handleRedo(framework: AgentFramework): CommandResult {
   const point = redoStack.pop()!;
   try {
     cm.switchBranch(point.branchId);
-    return { lines: [{ text: `Redone. Switched to branch ${point.branchName}.`, style: 'system' }] };
+    return { lines: [{ text: `Redone. Switched to branch ${point.branchName}.`, style: 'system' }], branchChanged: true };
   } catch (err) {
     return { lines: [{ text: `Redo failed: ${err}`, style: 'system' }] };
   }
@@ -492,7 +494,7 @@ function handleRestore(framework: AgentFramework, name?: string): CommandResult 
 
   try {
     cm.switchBranch(point.branchId);
-    return { lines: [{ text: `Restored to checkpoint "${name}" (branch: ${point.branchName}).`, style: 'system' }] };
+    return { lines: [{ text: `Restored to checkpoint "${name}" (branch: ${point.branchName}).`, style: 'system' }], branchChanged: true };
   } catch (err) {
     return { lines: [{ text: `Restore failed: ${err}`, style: 'system' }] };
   }
@@ -533,7 +535,7 @@ function handleCheckout(framework: AgentFramework, name?: string): CommandResult
 
   try {
     cm.switchBranch(target.id);
-    return { lines: [{ text: `Switched to branch ${target.name}.`, style: 'system' }] };
+    return { lines: [{ text: `Switched to branch ${target.name}.`, style: 'system' }], branchChanged: true };
   } catch (err) {
     return { lines: [{ text: `Checkout failed: ${err}`, style: 'system' }] };
   }

@@ -98,6 +98,20 @@ interface LaunchedTask {
   completed: boolean;
 }
 
+/** Persisted subagent state (stored in Chronicle module state). */
+interface PersistedSubagent {
+  name: string;
+  type: 'spawn' | 'fork';
+  task: string;
+  status: 'running' | 'completed' | 'failed';
+  startedAt: number;
+  completedAt?: number;
+  toolCallsCount: number;
+  findingsCount: number;
+  statusMessage?: string;
+  parent?: string;
+}
+
 /** Observable state of an active subagent, for TUI display. */
 export interface ActiveSubagent {
   name: string;
@@ -190,6 +204,9 @@ export class SubagentModule implements Module {
 
   /** Observable registry of active/recent subagents for TUI display. */
   readonly activeSubagents = new Map<string, ActiveSubagent>();
+
+  /** Parent agent name for each subagent (for fleet tree reconstruction). */
+  readonly parentMap = new Map<string, string>();
 
   // Stashed results from subagent:return tool calls, keyed by framework agent name
   private returnedResults = new Map<string, string>();
@@ -317,10 +334,67 @@ export class SubagentModule implements Module {
 
   async start(ctx: ModuleContext): Promise<void> {
     this.ctx = ctx;
+    // Restore in-memory state from Chronicle (for session restore / branch switch)
+    this.restoreFromStore();
   }
 
   async stop(): Promise<void> {
     this.ctx = null;
+  }
+
+  /**
+   * Persist subagent registry to Chronicle module state.
+   * Called after each lifecycle transition so branch ops get correct fleet.
+   */
+  private persistState(): void {
+    if (!this.ctx) return;
+    const agents: Record<string, PersistedSubagent> = {};
+    for (const [key, sa] of this.activeSubagents) {
+      agents[key] = {
+        name: sa.name,
+        type: sa.type,
+        task: sa.task,
+        status: sa.status,
+        startedAt: sa.startedAt,
+        completedAt: sa.completedAt,
+        toolCallsCount: sa.toolCallsCount,
+        findingsCount: sa.findingsCount,
+        statusMessage: sa.statusMessage,
+        parent: this.parentMap.get(sa.name),
+      };
+    }
+    this.ctx.setState({ agents });
+  }
+
+  /**
+   * Restore activeSubagents + parentMap from Chronicle module state.
+   * Marks any 'running' entries as 'interrupted' since the actual processes are gone.
+   */
+  restoreFromStore(): void {
+    if (!this.ctx) return;
+    const persisted = this.ctx.getState<{ agents?: Record<string, PersistedSubagent> }>();
+    if (!persisted?.agents) return;
+
+    this.activeSubagents.clear();
+    this.parentMap.clear();
+
+    for (const [key, pa] of Object.entries(persisted.agents)) {
+      const sa: ActiveSubagent = {
+        name: pa.name,
+        type: pa.type,
+        task: pa.task,
+        status: pa.status === 'running' ? 'completed' : pa.status,
+        startedAt: pa.startedAt,
+        completedAt: pa.completedAt ?? (pa.status === 'running' ? Date.now() : undefined),
+        toolCallsCount: pa.toolCallsCount,
+        findingsCount: pa.findingsCount,
+        statusMessage: pa.status === 'running' ? 'interrupted (branch/session switch)' : pa.statusMessage,
+      };
+      this.activeSubagents.set(key, sa);
+      if (pa.parent) {
+        this.parentMap.set(pa.name, pa.parent);
+      }
+    }
   }
 
   getTools(): ToolDefinition[] {
@@ -1006,6 +1080,8 @@ export class SubagentModule implements Module {
     };
     const entryKey = `spawn-${input.name}`;
     this.activeSubagents.set(entryKey, entry);
+    if (_callerAgentName) this.parentMap.set(input.name, _callerAgentName);
+    this.persistState();
 
     try {
       const framework = this.getFramework();
@@ -1119,6 +1195,7 @@ export class SubagentModule implements Module {
       entry.statusMessage = lastError!.message;
       throw lastError!;
     } finally {
+      this.persistState();
       this.releaseSlot();
     }
   }
@@ -1132,6 +1209,8 @@ export class SubagentModule implements Module {
       status: 'running', startedAt: Date.now(), toolCallsCount: 0, findingsCount: 0,
     };
     this.activeSubagents.set(input.name, entry);
+    if (callerAgentName) this.parentMap.set(input.name, callerAgentName);
+    this.persistState();
 
     try {
       const framework = this.getFramework();
@@ -1289,6 +1368,7 @@ export class SubagentModule implements Module {
       entry.statusMessage = lastError!.message;
       throw lastError!;
     } finally {
+      this.persistState();
       this.releaseSlot();
     }
   }

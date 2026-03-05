@@ -364,6 +364,43 @@ export async function runTui(app: AppContext): Promise<void> {
     addLine(`── end history ──`, DIM_GRAY);
   }
 
+  /**
+   * Rebuild the TUI display from Chronicle state after a branch switch.
+   * Clears conversation, reloads messages, restores fleet tree from persisted subagent state.
+   */
+  function refreshFromStore() {
+    // Clear conversation display
+    const children = [...scrollBox.getChildren()];
+    for (const child of children) {
+      scrollBox.remove(child.id);
+    }
+    messageCounter = 0;
+
+    // Reset streaming state
+    streaming = false;
+    currentStreamText = null;
+    currentStreamBuffer = '';
+    state.status = 'idle';
+    state.tool = null;
+
+    // Reload conversation from Chronicle
+    loadSessionHistory();
+
+    // Restore fleet tree from persisted subagent module state
+    if (subMod) {
+      subMod.restoreFromStore();
+      state.subagents = [...subMod.activeSubagents.values()];
+
+      // Rebuild TUI-side parent map from persisted data
+      agentParent.clear();
+      for (const [child, parent] of subMod.parentMap) {
+        agentParent.set(child, parent);
+      }
+    }
+
+    updateStatus();
+  }
+
   const fmtK = (n: number) => {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
     if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
@@ -1150,6 +1187,11 @@ export async function runTui(app: AppContext): Promise<void> {
         }
       }
 
+      // Branch operation: refresh display from Chronicle state
+      if (result.branchChanged) {
+        refreshFromStore();
+      }
+
       // Session switch: async teardown + rebuild
       if (result.switchToSessionId) {
         state.status = 'switching';
@@ -1161,18 +1203,9 @@ export async function runTui(app: AppContext): Promise<void> {
           subMod = app.framework.getAllModules().find(m => m.name === 'subagent') as SubagentModule | undefined;
           app.framework.onTrace(onTrace as (e: unknown) => void);
 
-          // Clear conversation display
-          const children = [...scrollBox.getChildren()];
-          for (const child of children) {
-            scrollBox.remove(child.id);
-          }
-
           const session = app.sessionManager.getActiveSession();
+          refreshFromStore();
           addLine(`Session: ${session?.name ?? 'unknown'}`, GRAY);
-          loadSessionHistory();
-          state.status = 'idle';
-          state.tool = null;
-          state.subagents = [];
           state.tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
           updateStatus();
         }).catch(err => {
