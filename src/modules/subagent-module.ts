@@ -4,13 +4,11 @@
  * Tools:
  *   subagent:spawn  — Fresh agent with system prompt + task, no inherited context
  *   subagent:fork   — Agent inheriting parent's compiled context
- *   subagent:launch — Non-blocking spawn/fork, returns task ID
- *   subagent:wait   — Block until launched tasks complete
+ *   subagent:hud    — Toggle fleet status HUD overlay
  *
- * Interaction model (parallel-async-await):
- *   The LLM can emit multiple spawn/fork calls in one turn.
- *   The AF dispatches them concurrently. Parent blocks until all complete.
- *   Each subagent's findings are returned as the tool result.
+ * By default, spawn/fork are async: they return immediately and deliver
+ * results as user messages + inference-request events. Pass `sync: true`
+ * to block until completion (old behavior).
  */
 
 import type {
@@ -68,6 +66,7 @@ interface SpawnInput {
   model?: string;
   maxTokens?: number;
   tools?: string[];
+  sync?: boolean;
 }
 
 interface ForkInput {
@@ -75,27 +74,15 @@ interface ForkInput {
   task: string;
   systemPrompt?: string;
   model?: string;
+  sync?: boolean;
 }
 
-interface LaunchInput {
+/** Handle for an async (fire-and-forget) subagent. */
+interface AsyncSubagentHandle {
   name: string;
-  systemPrompt?: string;
-  task: string;
-  fork?: boolean;
-  model?: string;
-}
-
-interface WaitInput {
-  taskId?: string;
-  all?: boolean;
-}
-
-interface LaunchedTask {
-  taskId: string;
+  type: 'spawn' | 'fork';
   promise: Promise<SubagentResult>;
-  resolve?: (result: SubagentResult) => void;
-  result?: SubagentResult;
-  completed: boolean;
+  parentAgentName: string;
 }
 
 /**
@@ -197,8 +184,7 @@ export class SubagentModule implements Module {
   private framework: AgentFramework | null = null;
   private maxDepth: number;
   private currentDepth: number;
-  private launchedTasks = new Map<string, LaunchedTask>();
-  private taskCounter = 0;
+  private asyncHandles = new Map<string, AsyncSubagentHandle>();
 
   // Concurrency control — adaptive rate-limit-aware semaphore
   private configuredMaxConcurrent: number;   // User's ceiling
@@ -417,7 +403,7 @@ export class SubagentModule implements Module {
     return [
       {
         name: 'spawn',
-        description: 'Spawn a fresh subagent with a system prompt and task. Blocks until the subagent completes. Call multiple spawns in one turn to run them in parallel.',
+        description: 'Spawn a fresh subagent with a system prompt and task. Async by default — returns immediately and delivers results as a message. Pass sync:true to block until completion.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -431,13 +417,14 @@ export class SubagentModule implements Module {
               items: { type: 'string' },
               description: 'Tool names the subagent can use (default: all non-subagent tools)',
             },
+            sync: { type: 'boolean', description: 'If true, block until subagent completes (default: false)' },
           },
           required: ['name', 'systemPrompt', 'task'],
         },
       },
       {
         name: 'fork',
-        description: 'Fork a subagent that inherits your current context. The forked agent sees your full conversation history and can continue from where you are. Blocks until completion.',
+        description: 'Fork a subagent that inherits your current context. Async by default — returns immediately and delivers results as a message. Pass sync:true to block until completion.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -445,34 +432,20 @@ export class SubagentModule implements Module {
             task: { type: 'string', description: 'Additional task for the fork to perform' },
             systemPrompt: { type: 'string', description: 'Override system prompt (optional, defaults to parent)' },
             model: { type: 'string', description: 'Model override (optional)' },
+            sync: { type: 'boolean', description: 'If true, block until fork completes (default: false)' },
           },
           required: ['name', 'task'],
         },
       },
       {
-        name: 'launch',
-        description: 'Non-blocking spawn or fork. Returns a task ID immediately. Use subagent:wait to collect results later.',
+        name: 'hud',
+        description: 'Toggle the subagent fleet HUD overlay. When enabled, a compact fleet status summary is injected before each inference.',
         inputSchema: {
           type: 'object',
           properties: {
-            name: { type: 'string', description: 'Short name for the subagent' },
-            systemPrompt: { type: 'string', description: 'System prompt (required for non-fork)' },
-            task: { type: 'string', description: 'The task' },
-            fork: { type: 'boolean', description: 'If true, fork parent context (default: false)' },
-            model: { type: 'string', description: 'Model override (optional)' },
+            enabled: { type: 'boolean', description: 'Enable or disable the fleet HUD' },
           },
-          required: ['name', 'task'],
-        },
-      },
-      {
-        name: 'wait',
-        description: 'Wait for launched subagent tasks to complete. Blocks until done.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            taskId: { type: 'string', description: 'Specific task ID to wait for' },
-            all: { type: 'boolean', description: 'Wait for all launched tasks (default: true)' },
-          },
+          required: ['enabled'],
         },
       },
       {
@@ -516,10 +489,8 @@ export class SubagentModule implements Module {
         return this.handleSpawn(call.input as SpawnInput, caller);
       case 'fork':
         return this.handleFork(call.input as ForkInput, caller);
-      case 'launch':
-        return this.handleLaunch(call.input as LaunchInput, caller);
-      case 'wait':
-        return this.handleWait(call.input as WaitInput);
+      case 'hud':
+        return this.handleHud(call.input as { enabled: boolean });
       case 'concurrency':
         return this.handleConcurrency(call.input as { maxConcurrent?: number });
       case 'peek':
@@ -542,6 +513,38 @@ export class SubagentModule implements Module {
 
   async onProcess(_event: ProcessEvent, _state: ProcessState): Promise<EventResponse> {
     return {};
+  }
+
+  async gatherContext(_agentName: string): Promise<import('@connectome/context-manager').ContextInjection[]> {
+    if (!this.ctx) return [];
+    const persisted = this.ctx.getState<{ hudEnabled?: boolean }>() ?? {};
+    if (!persisted.hudEnabled) return [];
+
+    const lines: string[] = [];
+    for (const [, sa] of this.activeSubagents) {
+      const elapsed = sa.completedAt
+        ? Math.floor((sa.completedAt - sa.startedAt) / 1000)
+        : Math.floor((Date.now() - sa.startedAt) / 1000);
+      const parent = this.parentMap.get(sa.name) ?? 'researcher';
+      const parentShort = parent.replace(/^(spawn|fork)-/, '').replace(/-d\d+-\d+$/, '').replace(/-retry\d+$/, '');
+      const task = sa.task.length > 50 ? sa.task.slice(0, 47) + '...' : sa.task;
+      lines.push(`  ${sa.name} [${sa.type}] ${sa.status} ${elapsed}s ${sa.toolCallsCount}calls parent:${parentShort} "${task}"`);
+    }
+
+    // Also show async handles still running
+    for (const [name] of this.asyncHandles) {
+      if (!this.activeSubagents.has(name) && !this.activeSubagents.has(`spawn-${name}`)) {
+        lines.push(`  ${name} [async] pending`);
+      }
+    }
+
+    if (lines.length === 0) return [];
+
+    return [{
+      namespace: 'subagent-fleet',
+      position: 'afterUser',
+      content: [{ type: 'text', text: `[Fleet Status]\n${lines.join('\n')}` }],
+    }];
   }
 
   // =========================================================================
@@ -1011,16 +1014,30 @@ export class SubagentModule implements Module {
       };
     }
 
-    try {
-      const result = await this.runSpawn(input, callerAgentName, callerDepth);
-      return { success: true, data: result };
-    } catch (err) {
-      return {
-        success: false,
-        isError: true,
-        error: err instanceof Error ? err.message : String(err),
-      };
+    // Sync mode: block until completion (old behavior)
+    if (input.sync) {
+      try {
+        const result = await this.runSpawn(input, callerAgentName, callerDepth);
+        return { success: true, data: result };
+      } catch (err) {
+        return {
+          success: false,
+          isError: true,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     }
+
+    // Async mode (default): fire-and-forget, deliver result as message
+    const parentAgentName = callerAgentName ?? this.config.parentAgentName ?? 'researcher';
+    const promise = this.runSpawn(input, callerAgentName, callerDepth);
+    this.asyncHandles.set(input.name, { name: input.name, type: 'spawn', promise, parentAgentName });
+
+    promise
+      .then(result => this.deliverAsyncResult(input.name, result, parentAgentName))
+      .catch(err => this.deliverAsyncError(input.name, err, parentAgentName));
+
+    return { success: true, data: `Subagent '${input.name}' spawned. Running in background.` };
   }
 
   private async handleFork(input: ForkInput, callerAgentName?: string): Promise<ToolResult> {
@@ -1033,99 +1050,70 @@ export class SubagentModule implements Module {
       };
     }
 
-    try {
-      const result = await this.runFork(input, callerAgentName, callerDepth);
-      return { success: true, data: result };
-    } catch (err) {
-      return {
-        success: false,
-        isError: true,
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
-  }
-
-  private async handleLaunch(input: LaunchInput, callerAgentName?: string): Promise<ToolResult> {
-    const callerDepth = callerAgentName ? (this.agentDepths.get(callerAgentName) ?? 0) : 0;
-    if (callerDepth >= this.maxDepth) {
-      return {
-        success: false,
-        isError: true,
-        error: `Max subagent depth ${this.maxDepth} reached (caller at depth ${callerDepth})`,
-      };
-    }
-
-    const taskId = `task-${++this.taskCounter}`;
-
-    const promise = input.fork
-      ? this.runFork({
-          name: input.name,
-          task: input.task,
-          systemPrompt: input.systemPrompt,
-          model: input.model,
-        }, callerAgentName, callerDepth)
-      : this.runSpawn({
-          name: input.name,
-          systemPrompt: input.systemPrompt ?? 'You are a helpful research assistant.',
-          task: input.task,
-          model: input.model,
-        }, callerAgentName, callerDepth);
-
-    const task: LaunchedTask = {
-      taskId,
-      promise,
-      completed: false,
-    };
-
-    // When promise resolves, mark completed
-    promise.then(result => {
-      task.result = result;
-      task.completed = true;
-    }).catch(err => {
-      task.result = {
-        summary: `Error: ${err instanceof Error ? err.message : String(err)}`,
-        findings: [],
-        issues: [String(err)],
-        toolCallsCount: 0,
-      };
-      task.completed = true;
-    });
-
-    this.launchedTasks.set(taskId, task);
-
-    return { success: true, data: { taskId } };
-  }
-
-  private async handleWait(input: WaitInput): Promise<ToolResult> {
-    // Before waiting, reclaim any zombie slots so we don't block on them
-    this.reclaimZombieSlots();
-
-    if (input.taskId) {
-      const task = this.launchedTasks.get(input.taskId);
-      if (!task) {
-        return { success: false, isError: true, error: `Unknown task: ${input.taskId}` };
+    // Sync mode: block until completion (old behavior)
+    if (input.sync) {
+      try {
+        const result = await this.runFork(input, callerAgentName, callerDepth);
+        return { success: true, data: result };
+      } catch (err) {
+        return {
+          success: false,
+          isError: true,
+          error: err instanceof Error ? err.message : String(err),
+        };
       }
-      const result = await task.promise;
-      this.launchedTasks.delete(input.taskId);
-      return { success: true, data: result };
     }
 
-    // Wait for all
-    if (this.launchedTasks.size === 0) {
-      return {
-        success: true,
-        data: {
-          pending: 0,
-          message: 'No launched tasks to wait for. Use subagent:launch to start a non-blocking task first, then subagent:wait to collect results.',
-        },
-      };
-    }
-    const results: Record<string, SubagentResult> = {};
-    for (const [id, task] of this.launchedTasks) {
-      results[id] = await task.promise;
-    }
-    this.launchedTasks.clear();
-    return { success: true, data: results };
+    // Async mode (default): fire-and-forget, deliver result as message
+    const parentAgentName = callerAgentName ?? this.config.parentAgentName ?? 'researcher';
+    const promise = this.runFork(input, callerAgentName, callerDepth);
+    this.asyncHandles.set(input.name, { name: input.name, type: 'fork', promise, parentAgentName });
+
+    promise
+      .then(result => this.deliverAsyncResult(input.name, result, parentAgentName))
+      .catch(err => this.deliverAsyncError(input.name, err, parentAgentName));
+
+    return { success: true, data: `Subagent '${input.name}' forked. Running in background.` };
+  }
+
+  private deliverAsyncResult(name: string, result: SubagentResult, parentAgentName: string): void {
+    this.asyncHandles.delete(name);
+    if (!this.ctx) return;
+
+    this.ctx.addMessage('user', [{
+      type: 'text',
+      text: `[Subagent '${name}' returned]\n\n${result.summary}`,
+    }]);
+    this.ctx.pushEvent({
+      type: 'inference-request',
+      agentName: parentAgentName,
+      reason: `subagent-completed:${name}`,
+      source: 'subagent',
+    });
+  }
+
+  private deliverAsyncError(name: string, err: unknown, parentAgentName: string): void {
+    this.asyncHandles.delete(name);
+    if (!this.ctx) return;
+
+    const message = err instanceof Error ? err.message : String(err);
+    this.ctx.addMessage('user', [{
+      type: 'text',
+      text: `[Subagent '${name}' failed]\n\nError: ${message}`,
+    }]);
+    this.ctx.pushEvent({
+      type: 'inference-request',
+      agentName: parentAgentName,
+      reason: `subagent-failed:${name}`,
+      source: 'subagent',
+    });
+  }
+
+  private handleHud(input: { enabled: boolean }): ToolResult {
+    if (!this.ctx) return { success: false, isError: true, error: 'Module not started' };
+    const persisted = this.ctx.getState<{ agents?: unknown; hudEnabled?: boolean }>() ?? {};
+    this.ctx.setState({ ...persisted, hudEnabled: input.enabled });
+    return { success: true, data: { hudEnabled: input.enabled } };
   }
 
   private handleConcurrency(input: { maxConcurrent?: number }): ToolResult {

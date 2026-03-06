@@ -890,6 +890,19 @@ export async function runTui(app: AppContext): Promise<void> {
         break;
       }
 
+      // Wake subscription trigger notice
+      case 'process:received': {
+        const pe = event.processEvent as { type: string; source?: string; metadata?: Record<string, unknown> } | undefined;
+        if (pe?.source === 'wake:triggered' && pe.metadata) {
+          const subs = (pe.metadata.subscriptions as string[]) ?? [];
+          const summary = (pe.metadata.eventSummary as string) ?? '';
+          const snippet = summary.length > 60 ? summary.slice(0, 57) + '...' : summary;
+          const label = subs.join(', ');
+          addLine(`\u2691 wake triggered: ${label} \u2014 "${snippet}"`, YELLOW);
+        }
+        break;
+      }
+
       case 'tool:started': {
         const tool = event.tool as string;
         if (agent === 'researcher') {

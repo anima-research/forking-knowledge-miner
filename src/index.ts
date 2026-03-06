@@ -24,6 +24,7 @@ import { SYSTEM_PROMPT } from './prompts/system.js';
 import { SubagentModule } from './modules/subagent-module.js';
 import { LessonsModule } from './modules/lessons-module.js';
 import { RetrievalModule } from './modules/retrieval-module.js';
+import { WakeModule } from './modules/wake-module.js';
 import { TuiModule } from './modules/tui-module.js';
 import { loadMcplServers, saveMcplServers, DEFAULT_CONFIG_PATH } from './mcpl-config.js';
 import { SessionManager } from './session-manager.js';
@@ -98,6 +99,19 @@ async function createFramework(membrane: Membrane, storePath: string): Promise<A
   const retrievalModule = new RetrievalModule({ membrane });
   const filesModule = new FilesModule({ namespace: 'products' });
 
+  // WakeModule — onWake callback wired after framework creation
+  let emitWakeTrace: ((subs: string[], summary: string) => void) | undefined;
+  const wakeModule = new WakeModule({
+    agentName: 'researcher',
+    onWake: (subs, summary) => emitWakeTrace?.(subs, summary),
+  });
+
+  // Augment MCPL server configs with wake filtering
+  const augmentedServers = mcplServers.map(server => ({
+    ...server,
+    shouldTriggerInference: wakeModule.shouldTrigger,
+  }));
+
   const framework = await AgentFramework.create({
     storePath,
     membrane,
@@ -115,11 +129,25 @@ async function createFramework(membrane: Membrane, storePath: string): Promise<A
         }),
       },
     ],
-    modules: [new TuiModule(), subagentModule, lessonsModule, retrievalModule, filesModule],
-    mcplServers,
+    modules: [new TuiModule(), subagentModule, lessonsModule, retrievalModule, wakeModule, filesModule],
+    mcplServers: augmentedServers,
   });
 
+  // Wire onWake → framework trace emission
+  emitWakeTrace = (subs, summary) => {
+    // Emit as a custom trace event via pushEvent (process:received trace)
+    // TUI picks this up via the onTrace listener
+    framework.pushEvent({
+      type: 'external-message',
+      source: 'wake:triggered',
+      content: summary,
+      metadata: { subscriptions: subs, eventSummary: summary },
+      triggerInference: false,
+    } as any);
+  };
+
   subagentModule.setFramework(framework);
+  wakeModule.setFramework(framework);
   filesModule.initStore(framework.getStore());
   return framework;
 }

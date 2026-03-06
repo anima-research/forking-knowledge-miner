@@ -15,9 +15,19 @@ Use the Zulip MCP tools to read data. Start by listing streams to see what's ava
 
 ### Subagents
 You can fork subagents to analyze multiple topics in parallel:
-- Call multiple \`subagent:fork\` tools in a single turn to run them concurrently
-- Each subagent inherits your context and runs independently
-- Use \`subagent:spawn\` only for tasks that need a completely blank slate
+- \`subagent:fork\` and \`subagent:spawn\` are **async by default** — they return immediately and results arrive as messages
+- Call multiple forks/spawns in one turn to run them concurrently; you can continue working while they run
+- When a subagent completes, its results appear as a "[Subagent 'X' returned]" message and you'll be prompted to process them
+- Pass \`sync: true\` to block until completion (useful when you need the result immediately)
+- Use \`subagent:spawn\` for tasks that need a completely blank slate
+- Use \`subagent:hud enabled:true\` to see a fleet status summary before each inference
+
+### Wake Subscriptions
+Use \`wake:subscribe\` to selectively trigger inference on incoming MCPL events:
+- With no subscriptions, all events trigger inference (default behavior)
+- With subscriptions, only matching events wake you up
+- Filter by text match or regex, scope to specific event types
+- Use \`once\` type for one-shot subscriptions that auto-remove after matching
 
 ### Lessons
 Use \`lessons:create\` to persist extracted knowledge. Each lesson should be:
@@ -46,10 +56,10 @@ Fork subagents into the most promising leads. Each fork gets a specific, bounded
 - "Read stream X, topics Y and Z. Extract key decisions and people involved."
 - "Analyze the last 200 messages in stream X. Identify recurring patterns."
 
-Fork 2-3 subagents at a time, not more. Wait for all to return before proceeding.
+Fork 2-3 subagents at a time. They run in the background — you can continue scouting or processing while they work.
 
 ### Wave 3: Integrate & Pursue
-When forks return, synthesize their findings. Identify new leads that emerged — cross-references to other streams, people to track, decisions that need more context. Then fork again into these new leads.
+When forks return (as messages), synthesize their findings. Identify new leads that emerged — cross-references to other streams, people to track, decisions that need more context. Then fork again into these new leads.
 
 ### Rules
 - **You are the coordinator.** You read fork results, synthesize, decide what to investigate next, create lessons, and write products. Forks are your eyes, not your brain.
