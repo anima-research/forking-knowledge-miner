@@ -133,6 +133,8 @@ export async function runTui(app: AppContext): Promise<void> {
 
   let streaming = false;
   let currentStreamText: TextRenderable | null = null;
+  let backgrounded = false;       // researcher pushed to background via Ctrl+B
+  let backgroundBuffer = '';      // accumulates tokens while backgrounded
   let currentStreamBuffer = '';
   let verboseChat = false;
 
@@ -755,10 +757,16 @@ export async function runTui(app: AppContext): Promise<void> {
     switch (event.type) {
       case 'inference:started': {
         if (agent === 'researcher') {
-          state.status = 'thinking';
-          streamOutputTokens = 0;
-          spinnerFrame = 0;
-          beginStream();
+          if (backgrounded) {
+            // Researcher is running in background — don't show stream UI
+            state.status = 'background';
+            streamOutputTokens = 0;
+          } else {
+            state.status = 'thinking';
+            streamOutputTokens = 0;
+            spinnerFrame = 0;
+            beginStream();
+          }
           updateStatus();
         }
         break;
@@ -767,7 +775,11 @@ export async function runTui(app: AppContext): Promise<void> {
       case 'inference:tokens': {
         const content = event.content as string;
         if (content) {
-          if (agent === 'researcher' && streaming) {
+          if (agent === 'researcher' && backgrounded) {
+            // Silently accumulate tokens while backgrounded
+            backgroundBuffer += content;
+            streamOutputTokens += Math.ceil(content.length / 4);
+          } else if (agent === 'researcher' && streaming) {
             streamToken(content);
             streamOutputTokens += Math.ceil(content.length / 4);
             spinnerFrame = (spinnerFrame + 1) % SPINNER.length;
@@ -818,6 +830,15 @@ export async function runTui(app: AppContext): Promise<void> {
         if (agent === 'researcher') {
           state.status = 'idle';
           state.tool = null;
+          if (backgrounded) {
+            // Researcher returned from background — show accumulated output as a message
+            if (backgroundBuffer.trim()) {
+              addLine(backgroundBuffer, WHITE);
+            }
+            addLine('  (researcher returned from background)', CYAN);
+            backgrounded = false;
+            backgroundBuffer = '';
+          }
           if (streaming) endStream();
         }
         updateStatus();
@@ -827,6 +848,10 @@ export async function runTui(app: AppContext): Promise<void> {
       case 'inference:failed': {
         if (agent === 'researcher') {
           state.status = 'error';
+          if (backgrounded) {
+            backgrounded = false;
+            backgroundBuffer = '';
+          }
           if (streaming) endStream();
           addLine(`Error: ${event.error}`, RED);
           updateStatus();
@@ -853,7 +878,7 @@ export async function runTui(app: AppContext): Promise<void> {
 
           // Track parent-child for fleet tree
           for (const call of calls) {
-            if (call.name === 'subagent:spawn' || call.name === 'subagent:fork') {
+            if (call.name === 'subagent--spawn' || call.name === 'subagent--fork') {
               const childName = (call.input as Record<string, unknown>)?.name as string | undefined;
               if (childName) {
                 agentParent.set(childName, agent);
@@ -863,17 +888,17 @@ export async function runTui(app: AppContext): Promise<void> {
         }
 
         if (agent === 'researcher') {
-          state.status = 'tools';
+          state.status = backgrounded ? 'background' : 'tools';
           state.tool = names;
           if (streaming) endStream();
-          addLine(`[tools] ${names}`, YELLOW);
+          if (!backgrounded) addLine(`[tools] ${names}`, YELLOW);
         } else {
           const short = (agent ?? '').replace(/^(spawn|fork)-/, '').replace(/-\d+$/, '');
           addLine(`  [${short}] ${names}`, DIM_GRAY);
           const sa = state.subagents.find(s => (agent ?? '').includes(s.name));
           if (sa) {
             sa.toolCallsCount += calls.length;
-            sa.statusMessage = names.split(':').pop();
+            sa.statusMessage = names.split('--').pop();
           }
         }
         updateStatus();
@@ -923,7 +948,7 @@ export async function runTui(app: AppContext): Promise<void> {
             // OSC 8 hyperlink for the target directory
             const link = `\x1b]8;;file://${dir}\x07${dir}\x1b]8;;\x07`;
             addLine(`  ${short}materialize → ${link} (${fileList})`, DIM_GRAY);
-          } else if (tool === 'lessons:create' && toolInput.content) {
+          } else if (tool === 'lessons--create' && toolInput.content) {
             const content = String(toolInput.content);
             const tags = (toolInput.tags as string[] | undefined)?.join(', ') ?? '';
             const preview = content.length > 80 ? content.slice(0, 77) + '...' : content;
@@ -1100,6 +1125,35 @@ export async function runTui(app: AppContext): Promise<void> {
       addLine(verboseChat ? '(verbose: on — showing agent thoughts & subagent results)' : '(verbose: off)', DIM_GRAY);
       return;
     }
+    // Ctrl+B: push to background — detach any blocking sync subagents and/or
+    // background the researcher's current inference (stop displaying tokens,
+    // re-enable input; result appears as message when done)
+    if (key.ctrl && key.name === 'b' && state.viewMode === 'chat') {
+      let acted = false;
+
+      // 1. Detach any blocking sync subagents
+      if (subMod?.hasDetachable()) {
+        const detached = subMod.detachAll();
+        if (detached > 0) {
+          addLine(`  (${detached} sync subagent${detached > 1 ? 's' : ''} moved to background)`, CYAN);
+          acted = true;
+        }
+      }
+
+      // 2. Background the researcher's streaming output
+      if (streaming && state.status !== 'idle') {
+        endStream();
+        backgrounded = true;
+        addLine('  (researcher moved to background — result will appear when done)', CYAN);
+        updateStatus();
+        acted = true;
+      }
+
+      if (!acted) {
+        addLine('  (nothing to background)', DIM_GRAY);
+      }
+      return;
+    }
 
     // Chat view: Escape interrupts the active agent and all running subagents
     if (key.name === 'escape' && state.viewMode === 'chat') {
@@ -1110,6 +1164,10 @@ export async function runTui(app: AppContext): Promise<void> {
         if (agent) {
           agent.cancelStream();
           if (streaming) endStream();
+          if (backgrounded) {
+            backgrounded = false;
+            backgroundBuffer = '';
+          }
           state.status = 'idle';
           state.tool = null;
           addLine(cancelled > 0
@@ -1284,9 +1342,9 @@ function formatStatusLeft(
   spinnerChar?: string,
   outputTokens?: number,
 ): string {
-  const sColor = state.status === 'idle' ? '✓' : state.status === 'error' ? '✗' : '…';
+  const sColor = state.status === 'idle' ? '✓' : state.status === 'error' ? '✗' : state.status === 'background' ? '↓' : '…';
   let bar = `[${sColor} ${state.status}`;
-  if (spinnerChar !== undefined && state.status !== 'idle' && state.status !== 'error') {
+  if (spinnerChar !== undefined && state.status !== 'idle' && state.status !== 'error' && state.status !== 'background') {
     bar += ` ${spinnerChar}`;
     if (state.status === 'thinking' && outputTokens !== undefined && outputTokens > 0) {
       const tokStr = outputTokens >= 1000 ? (outputTokens / 1000).toFixed(1) + 'k' : String(outputTokens);
@@ -1301,7 +1359,8 @@ function formatStatusLeft(
   if (state.viewMode === 'fleet' || state.viewMode === 'peek') {
     bar += state.viewMode === 'peek' ? ` | peek: ${state.peekTarget}` : ' | fleet view';
   } else if (state.viewMode === 'chat') {
-    if (state.status !== 'idle' && state.status !== 'error') bar += ' Esc:stop';
+    if (state.status === 'background') bar += ' Esc:stop';
+    else if (state.status !== 'idle' && state.status !== 'error') bar += ' Ctrl+B:bg Esc:stop';
     if (running > 0) bar += ' Tab:fleet';
   }
   bar += ']';

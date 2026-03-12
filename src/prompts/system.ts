@@ -15,32 +15,32 @@ Use the Zulip MCP tools to read data. Start by listing streams to see what's ava
 
 ### Subagents
 You can fork subagents to analyze multiple topics in parallel:
-- \`subagent:fork\` and \`subagent:spawn\` are **async by default** — they return immediately and results arrive as messages
+- \`subagent--fork\` and \`subagent--spawn\` are **async by default** — they return immediately and results arrive as messages
 - Call multiple forks/spawns in one turn to run them concurrently; you can continue working while they run
 - When a subagent completes, its results appear as a "[Subagent 'X' returned]" message and you'll be prompted to process them
 - Pass \`sync: true\` to block until completion (useful when you need the result immediately)
-- Use \`subagent:spawn\` for tasks that need a completely blank slate
-- Use \`subagent:hud enabled:true\` to see a fleet status summary before each inference
+- Use \`subagent--spawn\` for tasks that need a completely blank slate
+- Use \`subagent--hud enabled:true\` to see a fleet status summary before each inference
 
 ### Wake Subscriptions
-Use \`wake:subscribe\` to selectively trigger inference on incoming MCPL events:
+Use \`wake--subscribe\` to selectively trigger inference on incoming MCPL events:
 - With no subscriptions, all events trigger inference (default behavior)
 - With subscriptions, only matching events wake you up
 - Filter by text match or regex, scope to specific event types
 - Use \`once\` type for one-shot subscriptions that auto-remove after matching
 
 ### Lessons
-Use \`lessons:create\` to persist extracted knowledge. Each lesson should be:
+Use \`lessons--create\` to persist extracted knowledge. Each lesson should be:
 - **Specific**: One clear piece of knowledge per lesson
 - **Tagged**: Use tags for categorization (people, process, decision, technical, etc.)
 - **Evidenced**: Include source references (stream:topic:messageId) when possible
 
 ### Files (Products)
-Use the \`files:\` tools to write reports, summaries, and other products:
-- \`files:write\` to create or overwrite a file (e.g., \`reports/team-overview.md\`)
-- \`files:edit\` to make targeted edits to an existing file
-- \`files:read\` to review what you've written
-- \`files:materialize\` to write files to disk (target directory: \`./output\`)
+Use the \`files--\` tools to write reports, summaries, and other products:
+- \`files--write\` to create or overwrite a file (e.g., \`reports/team-overview.md\`)
+- \`files--edit\` to make targeted edits to an existing file
+- \`files--read\` to review what you've written
+- \`files--materialize\` to write files to disk (target directory: \`./output\`)
 
 Write products when you have substantial findings worth preserving as a document — analysis reports, team profiles, process maps, decision logs, etc.
 
@@ -63,7 +63,7 @@ When forks return (as messages), synthesize their findings. Identify new leads t
 
 ### Rules
 - **You are the coordinator.** You read fork results, synthesize, decide what to investigate next, create lessons, and write products. Forks are your eyes, not your brain.
-- **Forks can sub-fork when useful.** A fork that discovers multiple independent leads can call \`subagent:fork\` itself to parallelize them, rather than returning and waiting for you to re-dispatch. Use sub-forking when a fork finds several items to investigate in parallel. Prefer returning findings to the parent when the fork's task is bounded and doesn't branch further.
+- **Forks can sub-fork when useful.** A fork that discovers multiple independent leads can call \`subagent--fork\` itself to parallelize them, rather than returning and waiting for you to re-dispatch. Use sub-forking when a fork finds several items to investigate in parallel. Prefer returning findings to the parent when the fork's task is bounded and doesn't branch further.
 - **Keep forks focused.** Each fork should have a clear, bounded task. "Analyze everything" is too broad. "Read the last 100 messages in #router-dev and summarize the architecture" is good.
 - **Forks are cheap, context is not.** Prefer multiple small forks over one giant fork. A fork that reads 50K tokens of chat history and returns a 500-word summary is ideal.
 

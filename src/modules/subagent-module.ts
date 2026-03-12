@@ -2,13 +2,17 @@
  * SubagentModule — spawn and fork ephemeral subagents.
  *
  * Tools:
- *   subagent:spawn  — Fresh agent with system prompt + task, no inherited context
- *   subagent:fork   — Agent inheriting parent's compiled context
- *   subagent:hud    — Toggle fleet status HUD overlay
+ *   subagent--spawn  — Fresh agent with system prompt + task, no inherited context
+ *   subagent--fork   — Agent inheriting parent's compiled context
+ *   subagent--hud    — Toggle fleet status HUD overlay
  *
  * By default, spawn/fork are async: they return immediately and deliver
  * results as user messages + inference-request events. Pass `sync: true`
- * to block until completion (old behavior).
+ * to block until completion.
+ *
+ * Sync tasks are detachable: user can push them to background mid-flight
+ * via Ctrl+B in TUI, or they auto-detach after `timeoutMs` if specified.
+ * Both spawn and fork accept `timeoutMs` for per-task execution deadlines.
  */
 
 import type {
@@ -24,7 +28,7 @@ import type {
   ContextManager,
 } from '@connectome/agent-framework';
 import type { AgentFramework } from '@connectome/agent-framework';
-import { AutobiographicalStrategy } from '@connectome/agent-framework';
+import { KnowledgeStrategy } from '@connectome/agent-framework';
 import type { ContentBlock } from 'membrane';
 
 // ---------------------------------------------------------------------------
@@ -67,6 +71,7 @@ interface SpawnInput {
   maxTokens?: number;
   tools?: string[];
   sync?: boolean;
+  timeoutMs?: number;
 }
 
 interface ForkInput {
@@ -75,6 +80,7 @@ interface ForkInput {
   systemPrompt?: string;
   model?: string;
   sync?: boolean;
+  timeoutMs?: number;
 }
 
 /** Handle for an async (fire-and-forget) subagent. */
@@ -83,6 +89,19 @@ interface AsyncSubagentHandle {
   type: 'spawn' | 'fork';
   promise: Promise<SubagentResult>;
   parentAgentName: string;
+}
+
+/**
+ * Handle for a sync subagent that can be detached mid-flight.
+ * When detached, the blocking tool call resolves immediately and
+ * the subagent continues running, delivering results async.
+ */
+interface DetachableHandle {
+  name: string;
+  type: 'spawn' | 'fork';
+  promise: Promise<SubagentResult>;
+  parentAgentName: string;
+  detach: () => void;
 }
 
 /**
@@ -185,6 +204,7 @@ export class SubagentModule implements Module {
   private maxDepth: number;
   private currentDepth: number;
   private asyncHandles = new Map<string, AsyncSubagentHandle>();
+  private detachableHandles = new Map<string, DetachableHandle>();
 
   // Concurrency control — adaptive rate-limit-aware semaphore
   private configuredMaxConcurrent: number;   // User's ceiling
@@ -210,7 +230,7 @@ export class SubagentModule implements Module {
   /** Parent agent name for each subagent (for fleet tree reconstruction). */
   readonly parentMap = new Map<string, string>();
 
-  // Stashed results from subagent:return tool calls, keyed by framework agent name
+  // Stashed results from subagent--return tool calls, keyed by framework agent name
   private returnedResults = new Map<string, string>();
 
   // Live state for peek observability
@@ -415,9 +435,10 @@ export class SubagentModule implements Module {
             tools: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Tool names the subagent can use (default: all non-subagent tools)',
+              description: 'Tool names the subagent can use (default: all). Note: subagent--return is always included automatically.',
             },
             sync: { type: 'boolean', description: 'If true, block until subagent completes (default: false)' },
+            timeoutMs: { type: 'number', description: 'Execution timeout in milliseconds. For async tasks, the subagent is cancelled after this duration. For sync tasks, auto-detaches to background after this duration (result delivered as message). Example: 600000 = 10 minutes.' },
           },
           required: ['name', 'systemPrompt', 'task'],
         },
@@ -433,6 +454,7 @@ export class SubagentModule implements Module {
             systemPrompt: { type: 'string', description: 'Override system prompt (optional, defaults to parent)' },
             model: { type: 'string', description: 'Model override (optional)' },
             sync: { type: 'boolean', description: 'If true, block until fork completes (default: false)' },
+            timeoutMs: { type: 'number', description: 'Execution timeout in milliseconds. For async tasks, the subagent is cancelled after this duration. For sync tasks, auto-detaches to background after this duration (result delivered as message). Example: 600000 = 10 minutes.' },
           },
           required: ['name', 'task'],
         },
@@ -1014,24 +1036,29 @@ export class SubagentModule implements Module {
       };
     }
 
-    // Sync mode: block until completion (old behavior)
+    const parentAgentName = callerAgentName ?? this.config.parentAgentName ?? 'researcher';
+
+    // Apply per-task timeout override if provided
+    const savedMaxExecution = this.maxExecutionMs;
+    if (input.timeoutMs !== undefined) {
+      this.maxExecutionMs = input.timeoutMs;
+    }
+
+    // Sync mode: block until completion, but detachable mid-flight
     if (input.sync) {
-      try {
-        const result = await this.runSpawn(input, callerAgentName, callerDepth);
-        return { success: true, data: result };
-      } catch (err) {
-        return {
-          success: false,
-          isError: true,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
+      const promise = this.runSpawn(input, callerAgentName, callerDepth);
+
+      // Create a detachable wrapper: resolves either when the subagent completes
+      // or when detach() is called (user Ctrl+B or auto-timeout)
+      const result = await this.runDetachable(input.name, 'spawn', promise, parentAgentName, input.timeoutMs);
+      this.maxExecutionMs = savedMaxExecution;
+      return result;
     }
 
     // Async mode (default): fire-and-forget, deliver result as message
-    const parentAgentName = callerAgentName ?? this.config.parentAgentName ?? 'researcher';
     const promise = this.runSpawn(input, callerAgentName, callerDepth);
     this.asyncHandles.set(input.name, { name: input.name, type: 'spawn', promise, parentAgentName });
+    this.maxExecutionMs = savedMaxExecution;
 
     promise
       .then(result => this.deliverAsyncResult(input.name, result, parentAgentName))
@@ -1050,24 +1077,27 @@ export class SubagentModule implements Module {
       };
     }
 
-    // Sync mode: block until completion (old behavior)
+    const parentAgentName = callerAgentName ?? this.config.parentAgentName ?? 'researcher';
+
+    // Apply per-task timeout override if provided
+    const savedMaxExecution = this.maxExecutionMs;
+    if (input.timeoutMs !== undefined) {
+      this.maxExecutionMs = input.timeoutMs;
+    }
+
+    // Sync mode: block until completion, but detachable mid-flight
     if (input.sync) {
-      try {
-        const result = await this.runFork(input, callerAgentName, callerDepth);
-        return { success: true, data: result };
-      } catch (err) {
-        return {
-          success: false,
-          isError: true,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
+      const promise = this.runFork(input, callerAgentName, callerDepth);
+
+      const result = await this.runDetachable(input.name, 'fork', promise, parentAgentName, input.timeoutMs);
+      this.maxExecutionMs = savedMaxExecution;
+      return result;
     }
 
     // Async mode (default): fire-and-forget, deliver result as message
-    const parentAgentName = callerAgentName ?? this.config.parentAgentName ?? 'researcher';
     const promise = this.runFork(input, callerAgentName, callerDepth);
     this.asyncHandles.set(input.name, { name: input.name, type: 'fork', promise, parentAgentName });
+    this.maxExecutionMs = savedMaxExecution;
 
     promise
       .then(result => this.deliverAsyncResult(input.name, result, parentAgentName))
@@ -1107,6 +1137,122 @@ export class SubagentModule implements Module {
       reason: `subagent-failed:${name}`,
       source: 'subagent',
     });
+  }
+
+  // =========================================================================
+  // Detachable sync → async transition
+  // =========================================================================
+
+  /**
+   * Run a sync subagent with the ability to detach mid-flight.
+   * Returns a ToolResult — either the completed result (if it finishes in time)
+   * or a "moved to background" acknowledgment (if detached by user or timeout).
+   */
+  private async runDetachable(
+    name: string,
+    type: 'spawn' | 'fork',
+    promise: Promise<SubagentResult>,
+    parentAgentName: string,
+    autoDetachMs?: number,
+  ): Promise<ToolResult> {
+    let detachResolve: ((value: 'detached') => void) | null = null;
+    const detachPromise = new Promise<'detached'>(resolve => { detachResolve = resolve; });
+
+    const handle: DetachableHandle = {
+      name,
+      type,
+      promise,
+      parentAgentName,
+      detach: () => detachResolve?.('detached'),
+    };
+    this.detachableHandles.set(name, handle);
+
+    // Optional auto-detach timeout (sync → async after N ms)
+    let autoTimer: ReturnType<typeof setTimeout> | null = null;
+    if (autoDetachMs !== undefined) {
+      autoTimer = setTimeout(() => {
+        if (this.detachableHandles.has(name)) {
+          handle.detach();
+        }
+      }, autoDetachMs);
+    }
+
+    type RaceResult =
+      | { kind: 'completed'; result: SubagentResult }
+      | { kind: 'error'; error: unknown }
+      | { kind: 'detached' };
+
+    try {
+      const winner: RaceResult = await Promise.race([
+        promise.then(
+          (result): RaceResult => ({ kind: 'completed', result }),
+          (err): RaceResult => ({ kind: 'error', error: err }),
+        ),
+        detachPromise.then((): RaceResult => ({ kind: 'detached' })),
+      ]);
+
+      if (autoTimer) clearTimeout(autoTimer);
+      this.detachableHandles.delete(name);
+
+      if (winner.kind === 'completed') {
+        return { success: true, data: winner.result };
+      }
+
+      if (winner.kind === 'error') {
+        const err = winner.error;
+        return {
+          success: false,
+          isError: true,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+
+      // Detached: transition to async — wire up result delivery
+      this.asyncHandles.set(name, { name, type, promise, parentAgentName });
+      promise
+        .then(result => this.deliverAsyncResult(name, result, parentAgentName))
+        .catch(err => this.deliverAsyncError(name, err, parentAgentName));
+
+      return {
+        success: true,
+        data: `Subagent '${name}' moved to background. Results will be delivered as a message when complete.`,
+      };
+    } catch {
+      if (autoTimer) clearTimeout(autoTimer);
+      this.detachableHandles.delete(name);
+      return { success: false, isError: true, error: `Unexpected error in detachable handler for '${name}'` };
+    }
+  }
+
+  /**
+   * Detach a currently-blocking sync subagent, converting it to async.
+   * Returns true if the subagent was found and detached.
+   */
+  detachSubagent(name: string): boolean {
+    const handle = this.detachableHandles.get(name);
+    if (!handle) return false;
+    handle.detach();
+    return true;
+  }
+
+  /**
+   * Detach all currently-blocking sync subagents.
+   * Returns the number of subagents detached.
+   */
+  detachAll(): number {
+    let count = 0;
+    for (const handle of this.detachableHandles.values()) {
+      handle.detach();
+      count++;
+    }
+    return count;
+  }
+
+  /**
+   * Check if any sync subagents are currently blocking (and thus detachable).
+   */
+  hasDetachable(): boolean {
+    return this.detachableHandles.size > 0;
   }
 
   private handleHud(input: { enabled: boolean }): ToolResult {
@@ -1163,7 +1309,8 @@ export class SubagentModule implements Module {
           model,
           systemPrompt: input.systemPrompt,
           maxTokens: input.maxTokens ?? this.config.defaultMaxTokens ?? 4096,
-          strategy: new AutobiographicalStrategy({
+          maxStreamTokens: 200_000,
+          strategy: new KnowledgeStrategy({
             headWindowTokens: 2_000,
             recentWindowTokens: 80_000,
             compressionModel: model,
@@ -1308,7 +1455,8 @@ export class SubagentModule implements Module {
           model,
           systemPrompt,
           maxTokens: this.config.defaultMaxTokens ?? 4096,
-          strategy: new AutobiographicalStrategy({
+          maxStreamTokens: 200_000,
+          strategy: new KnowledgeStrategy({
             headWindowTokens: 2_000,
             recentWindowTokens: 80_000,
             compressionModel: model,
@@ -1348,7 +1496,7 @@ export class SubagentModule implements Module {
           contextManager.addMessage(agentName, [{
             type: 'tool_use',
             id: forkCallId,
-            name: 'subagent:fork',
+            name: 'subagent--fork',
             input: { name: input.name, task: input.task },
           }] as ContentBlock[]);
           contextManager.addMessage('user', [{
@@ -1356,7 +1504,7 @@ export class SubagentModule implements Module {
             toolUseId: forkCallId,
             content: `Fork successful — you are now running inside the fork "${input.name}" ` +
               `(depth ${childDepth}/${this.maxDepth}). ` +
-              `Complete your task, then call subagent:return with your findings to deliver ` +
+              `Complete your task, then call subagent--return with your findings to deliver ` +
               `them back to the parent agent.` +
               (childDepth < this.maxDepth
                 ? ` You can sub-fork if needed (${this.maxDepth - childDepth} levels remaining).`
@@ -1474,21 +1622,28 @@ export class SubagentModule implements Module {
   /**
    * Build the allowedTools list for a subagent.
    * Removes subagent tools if at depth limit.
+   *
    */
   private filterToolNames(allowedTools?: string[], callerDepth = 0): 'all' | string[] {
+    // Always include subagent--return — subagents need it to deliver results
+    const ensureReturn = (list: string[]) => {
+      if (!list.includes('subagent--return')) list.push('subagent--return');
+      return list;
+    };
+
     // Use per-agent depth (from caller) rather than the module's static depth
     if (callerDepth + 1 >= this.maxDepth) {
       const allTools = this.getFramework().getAllTools();
       const filtered = allTools
-        .filter(t => !t.name.startsWith('subagent:'))
+        .filter(t => !t.name.startsWith('subagent--'))
         .map(t => t.name);
       if (allowedTools) {
         const allowed = new Set(allowedTools);
-        return filtered.filter(n => allowed.has(n));
+        return ensureReturn(filtered.filter(n => allowed.has(n)));
       }
-      return filtered;
+      return ensureReturn(filtered);
     }
-    return allowedTools ?? 'all';
+    return allowedTools ? ensureReturn(allowedTools) : 'all';
   }
 
 }

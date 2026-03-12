@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@connectome/agent-framework": "file:../agent-framework",
-    "@connectome/context-manager": "github:Anarchid/context-manager#fix-tool-crash",
+    "@connectome/context-manager": "github:Tengro/context-manager#feature/knowledge-strategy",
     "chronicle": "file:../chronicle",
     "membrane": "github:Anarchid/membrane#main",
     "@opentui/core": "^0.1.82"

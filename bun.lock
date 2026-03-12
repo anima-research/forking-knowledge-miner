@@ -6,7 +6,7 @@
       "name": "zulip-knowledge-app",
       "dependencies": {
         "@connectome/agent-framework": "file:../agent-framework",
-        "@connectome/context-manager": "github:Anarchid/context-manager#fix-tool-crash",
+        "@connectome/context-manager": "github:Tengro/context-manager#feature/knowledge-strategy",
         "@opentui/core": "^0.1.82",
         "chronicle": "file:../chronicle",
         "membrane": "github:Anarchid/membrane#main",
@@ -22,7 +22,7 @@
 
     "@connectome/agent-framework": ["@connectome/agent-framework@file:../agent-framework", { "dependencies": { "@connectome/context-manager": "file:../context-manager", "chronicle": "file:../chronicle", "discord.js": "^14.25.1", "membrane": "file:../membrane", "ws": "^8.18.0" }, "devDependencies": { "@types/node": "^22.0.0", "@types/ws": "^8.5.13", "discord.js": "^14.25.1", "tsx": "^4.21.0", "typescript": "^5.7.0" }, "bin": { "agent-framework-mcp": "./dist/src/api/mcp-server.js" } }],
 
-    "@connectome/context-manager": ["@connectome/context-manager@github:Anarchid/context-manager#b594a29", { "dependencies": { "chronicle": "file:../chronicle", "membrane": "file:../membrane" } }, "Anarchid-context-manager-b594a29", "sha512-xfF4ENbWLqyEq3aT9V62a0xwM/jFiQPiQ/CiGB/SuwpxGkB/Ic7vOnIeFJGBLzOYR3PuxO7omWUDgEz0wtMofg=="],
+    "@connectome/context-manager": ["@connectome/context-manager@github:Tengro/context-manager#6b55c58", { "dependencies": { "chronicle": "file:../chronicle", "membrane": "file:../membrane" } }, "Tengro-context-manager-6b55c58", "sha512-h05Oj9t2Oi8WS4//sX9O21xwHJeZoRqi+s4ZC3Nkj6vzcsJSKyQ22ET7Io0+KHq9FWE9IyjzPiJErbSCDahxjw=="],
 
     "@dimforge/rapier2d-simd-compat": ["@dimforge/rapier2d-simd-compat@0.17.3", "", {}, "sha512-bijvwWz6NHsNj5e5i1vtd3dU2pDhthSaTUZSh14DUGGKJfw8eMnlWZsxwHBxB/a3AXVNDjL9abuHw1k9FGR+jg=="],
 
