@@ -51,6 +51,11 @@ export interface RecipeMcpServer {
   reconnectIntervalMs?: number;
 }
 
+/**
+ * Subset of MountConfig exposed to recipes.
+ * Intentionally omits watchDebounceMs, followSymlinks, and maxFileSize —
+ * these are implementation details best left to framework defaults.
+ */
 export interface RecipeWorkspaceMount {
   name: string;
   path: string;
@@ -90,7 +95,7 @@ export const DEFAULT_RECIPE: Recipe = {
       'You are a helpful assistant. You have access to tools provided by connected MCP servers.',
       'Use them to help the user with their tasks.',
       '',
-      'You can fork subagents for parallel work, create persistent notes, and write files as products of your work.',
+      'You can fork subagents for parallel work, create persistent notes, and write files to `products/` as outputs of your work.',
     ].join('\n'),
   },
   modules: {
@@ -187,6 +192,32 @@ export function validateRecipe(raw: unknown): Recipe {
       }
       if (server.args !== undefined && !Array.isArray(server.args)) {
         throw new Error(`mcpServers.${id}.args must be an array`);
+      }
+    }
+  }
+
+  // Validate workspace mounts if present
+  if (obj.modules && typeof obj.modules === 'object') {
+    const mods = obj.modules as Record<string, unknown>;
+    if (mods.workspace && typeof mods.workspace === 'object') {
+      const ws = mods.workspace as Record<string, unknown>;
+      if (!Array.isArray(ws.mounts) || ws.mounts.length === 0) {
+        throw new Error('workspace.mounts must be a non-empty array');
+      }
+      for (let i = 0; i < ws.mounts.length; i++) {
+        const m = ws.mounts[i] as Record<string, unknown>;
+        if (!m || typeof m !== 'object') {
+          throw new Error(`workspace.mounts[${i}] must be an object`);
+        }
+        if (typeof m.name !== 'string' || !m.name) {
+          throw new Error(`workspace.mounts[${i}].name must be a non-empty string`);
+        }
+        if (typeof m.path !== 'string' || !m.path) {
+          throw new Error(`workspace.mounts[${i}].path must be a non-empty string`);
+        }
+        if (m.mode !== undefined && m.mode !== 'read-write' && m.mode !== 'read-only') {
+          throw new Error(`workspace.mounts[${i}].mode must be "read-write" or "read-only"`);
+        }
       }
     }
   }

@@ -14,7 +14,7 @@
  */
 
 import { Membrane, AnthropicAdapter, NativeFormatter } from 'membrane';
-import { AgentFramework, AutobiographicalStrategy, PassthroughStrategy, WorkspaceModule, type Module, type WorkspaceConfig, type MountConfig } from '@connectome/agent-framework';
+import { AgentFramework, AutobiographicalStrategy, PassthroughStrategy, WorkspaceModule, type Module, type MountConfig } from '@connectome/agent-framework';
 import { resolve } from 'node:path';
 import { SubagentModule } from './modules/subagent-module.js';
 import { LessonsModule } from './modules/lessons-module.js';
@@ -155,22 +155,30 @@ async function createFramework(membrane: Membrane, storePath: string, recipe: Re
   }
 
   // Workspace (replaces FilesModule + LocalFilesModule)
+  // Note: workspace: false disables ALL filesystem access (both read and write).
+  // Previously LocalFilesModule was always-on; this is an intentional change —
+  // recipes that need read-only access should keep workspace enabled (the default).
   let workspaceModule: WorkspaceModule | null = null;
   if (modules.workspace !== false) {
     let mounts: MountConfig[];
     if (typeof modules.workspace === 'object' && modules.workspace.mounts) {
-      mounts = modules.workspace.mounts.map((m: RecipeWorkspaceMount) => ({
-        name: m.name,
-        path: resolve(m.path),
-        mode: m.mode ?? 'read-write',
-        watch: m.watch ?? 'never',
-        ignore: m.ignore ?? [],
-      }));
+      // Only pass fields the recipe explicitly provides; let WorkspaceModule default the rest.
+      // We override watch to 'never' since FKM doesn't need chokidar filesystem watchers.
+      mounts = modules.workspace.mounts.map((m: RecipeWorkspaceMount) => {
+        const mount: MountConfig = {
+          name: m.name,
+          path: resolve(m.path),
+          mode: m.mode ?? 'read-write',
+          watch: m.watch ?? 'never', // FKM: no chokidar watchers by default
+        };
+        if (m.ignore) mount.ignore = m.ignore;
+        return mount;
+      });
     } else {
-      // Default: read-only local mount + read-write files mount
+      // Default: read-only local mount + read-write products mount
       mounts = [
-        { name: 'local', path: resolve('.'), mode: 'read-only' as const, watch: 'never' as const },
-        { name: 'files', path: resolve('./output'), mode: 'read-write' as const, watch: 'never' as const },
+        { name: 'local', path: resolve('.'), mode: 'read-only', watch: 'never' },
+        { name: 'products', path: resolve('./output'), mode: 'read-write', watch: 'never' },
       ];
     }
     workspaceModule = new WorkspaceModule({ mounts });
