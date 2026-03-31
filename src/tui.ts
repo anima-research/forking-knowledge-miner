@@ -1296,6 +1296,23 @@ export async function runTui(app: AppContext): Promise<void> {
         refreshFromStore();
       }
 
+      // Async command follow-up (e.g. /newtopic generating transition summary)
+      if (result.asyncWork) {
+        state.status = 'thinking';
+        updateStatus();
+        result.asyncWork.then(asyncResult => {
+          for (const l of asyncResult.lines) {
+            addLine(l.text, GRAY);
+          }
+          state.status = 'idle';
+          updateStatus();
+        }).catch(err => {
+          addLine(`Async command failed: ${err}`, RED);
+          state.status = 'error';
+          updateStatus();
+        });
+      }
+
       // Session switch: async teardown + rebuild
       if (result.switchToSessionId) {
         state.status = 'switching';
@@ -1320,7 +1337,9 @@ export async function runTui(app: AppContext): Promise<void> {
       }
     } else {
       addLine(`You: ${raw}`, GREEN);
-      state.status = 'thinking';
+      const agent = app.framework.getAgent(rootAgentName);
+      const agentBusy = agent && (agent.state.status === 'streaming' || agent.state.status === 'inferring' || agent.state.status === 'waiting_for_tools');
+      state.status = agentBusy ? 'queued' : 'thinking';
       updateStatus();
       app.framework.pushEvent({
         type: 'external-message', source: 'tui',
@@ -1371,7 +1390,7 @@ function formatStatusLeft(
   spinnerChar?: string,
   outputTokens?: number,
 ): string {
-  const sColor = state.status === 'idle' ? '✓' : state.status === 'error' ? '✗' : state.status === 'background' ? '↓' : '…';
+  const sColor = state.status === 'idle' ? '✓' : state.status === 'error' ? '✗' : state.status === 'background' ? '↓' : state.status === 'queued' ? '⏳' : '…';
   let bar = `[${sColor} ${state.status}`;
   if (spinnerChar !== undefined && state.status !== 'idle' && state.status !== 'error' && state.status !== 'background') {
     bar += ` ${spinnerChar}`;

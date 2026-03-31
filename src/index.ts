@@ -201,10 +201,11 @@ async function createFramework(membrane: Membrane, storePath: string, recipe: Re
   const fileServers = loadMcplServers(DEFAULT_CONFIG_PATH);
   const fileServerIds = new Set(fileServers.map(s => s.id));
 
-  // Convert recipe servers to LoadedServerConfig shape
+  // Convert recipe servers to McplServerConfig shape
   const recipeServerList = Object.entries(recipeServers)
     .filter(([id]) => !fileServerIds.has(id)) // file wins on conflict
-    .map(([id, entry]) => ({ id, ...entry }));
+    .filter(([, entry]) => entry.command) // must have a command
+    .map(([id, entry]) => ({ id, ...entry, command: entry.command! }));
 
   const allServers = [...recipeServerList, ...fileServers];
 

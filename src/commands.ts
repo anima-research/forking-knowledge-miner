@@ -16,6 +16,7 @@
  *   /budget [N]    — Show/set stream token budget (e.g. /budget 1m)
  *   /session       — Session management (list, new, switch, rename, delete)
  *   /recipe        — Show current recipe info
+ *   /newtopic      — Reset head window (auto-summarize or with user context)
  *   /help          — List commands
  */
 
@@ -73,6 +74,8 @@ export interface CommandResult {
   switchToSessionId?: string;
   /** True when a Chronicle branch switch occurred — TUI should refreshFromStore(). */
   branchChanged?: boolean;
+  /** Async follow-up work — TUI shows status while awaiting, then displays result lines. */
+  asyncWork?: Promise<CommandResult>;
 }
 
 /**
@@ -127,6 +130,7 @@ export function handleCommand(command: string, app: AppContext): CommandResult {
           { text: '  /session rename <name> Rename current session', style: 'system' },
           { text: '  /session delete <name> Delete a session', style: 'system' },
           { text: '  /recipe                Show current recipe info', style: 'system' },
+          { text: '  /newtopic [context]    Reset head window (auto-summarize if empty)', style: 'system' },
         ],
       };
 
@@ -171,6 +175,9 @@ export function handleCommand(command: string, app: AppContext): CommandResult {
 
     case 'recipe':
       return handleRecipe(app);
+
+    case 'newtopic':
+      return handleNewTopic(app, args);
 
     default:
       return {
@@ -622,6 +629,33 @@ function handleHistory(framework: AgentFramework): CommandResult {
   }
 
   return { lines };
+}
+
+// ---------------------------------------------------------------------------
+// /newtopic — reset head window with topic transition
+// ---------------------------------------------------------------------------
+
+function handleNewTopic(app: AppContext, args: string[]): CommandResult {
+  const cm = getAgentCM(app.framework);
+  if (!cm) return { lines: [{ text: 'No context manager.', style: 'system' }] };
+
+  const userContext = args.join(' ').trim() || undefined;
+
+  const asyncWork = cm.resetHeadWindow(userContext).then(summary => ({
+    lines: [
+      { text: 'Topic reset. Transition summary:', style: 'system' as const },
+      { text: summary.slice(0, 300) + (summary.length > 300 ? '...' : ''), style: 'system' as const },
+    ],
+  })).catch(err => ({
+    lines: [{ text: `Topic reset failed: ${err instanceof Error ? err.message : err}`, style: 'system' as const }],
+  }));
+
+  return {
+    lines: [{ text: userContext
+      ? 'Resetting topic with provided context...'
+      : 'Generating transition summary...', style: 'system' }],
+    asyncWork,
+  };
 }
 
 // ---------------------------------------------------------------------------
